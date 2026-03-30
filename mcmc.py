@@ -10,7 +10,7 @@ from multiprocessing import Pool
 import corner
 import pickle
 
-data_t_naoh = pickle.load(open('./yield_results/data_t_naoh.pkl', 'rb'))
+data_t_naoh = pickle.load(open('./data/data.pkl', 'rb'))
 T_ref=70+273.15 # reference temperature for k_ref in K
 
 x0 = [np.log(1e-2), 40, np.log(1e-1), 20, 0.2, 1.0, 1.0,]  # Initial guess for ln(k_ref_lig), Ea_lig, ln(k_ref_ace), Ea_ace, b_lig, n_lig, n_ace

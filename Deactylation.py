@@ -38,19 +38,12 @@ class Deacetylation:
                 self.logger.setLevel(logging.DEBUG)
             
             if not self.logger.handlers:
-                # file_handler = logging.FileHandler(os.path.join(self.logdir, 'deacetylation.log'))
-                # file_handler.setFormatter(logging.Formatter('%(asctime)s %(levelname)s:%(message)s', datefmt='%I:%M:%S'))
-                # self.logger.addHandler(file_handler)
                 file_path = os.path.join(self.logdir, 'deacetylation.log')
                 file_handler = logging.FileHandler(file_path, mode='a') # mode='a' appends
                 formatter = logging.Formatter('%(asctime)s %(levelname)s:%(message)s', datefmt='%I:%M:%S')
                 file_handler.setFormatter(formatter)
                 self.logger.addHandler(file_handler)
-                
-                # Optional: Add console handler if you want to see logs in terminal
-                # console = logging.StreamHandler()
-                # console.setFormatter(formatter)
-                # self.logger.addHandler(console)
+
 
     def first_order_rate(self, w, rates):
         r_lig = -arrhenius(self._A[Lignin], self._Ea[Lignin], self._T) * w[NaOH] * w[Lignin]
