@@ -1,0 +1,20 @@
+name: dak # Replace with your desired environment name
+channels:
+  - conda-forge # Recommended for broader package availability and updates
+dependencies:
+  - python
+  - pandas
+  - numpy<2.0    
+  - matplotlib
+  - ipykernel
+  - openpyxl
+  - scikits.odes
+  - scikit-learn
+  - bayesian-optimization
+  - emcee
+  - corner
+  - tqdm
+  - arviz
+  - seaborn
+
+
