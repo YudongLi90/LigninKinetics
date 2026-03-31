@@ -10,7 +10,7 @@ from scipy.optimize import least_squares
 
 from timeit import Timer
 
-data_t_naoh = pickle.load(open('./data/data_t_naoh.pkl', 'rb'))
+data_t_naoh = pickle.load(open('./data/data.pkl', 'rb'))
 T_ref=70+273.15 # reference temperature for k_ref in K
 
 
