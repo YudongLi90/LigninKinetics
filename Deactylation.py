@@ -3,7 +3,6 @@ import numpy as np
 
 from constants import *
 from kinetic_rates import arrhenius
-from utils import calc_pH
 
 from scikits.odes.odeint import odeint
 
@@ -48,37 +47,27 @@ class Deacetylation:
     def first_order_rate(self, w, rates):
         r_lig = -arrhenius(self._A[Lignin], self._Ea[Lignin], self._T) * w[NaOH] * w[Lignin]
         r_ace = -arrhenius(self._A[Acetyl], self._Ea[Acetyl], self._T) * w[NaOH] * w[Acetyl]
-        r_xyl = -arrhenius(self._A[Xylan], self._Ea[Xylan], self._T) * w[NaOH] * w[Xylan]
-        r_C = -arrhenius(self._A[Glucan], self._Ea[Glucan], self._T) * w[NaOH] * w[Glucan]
-        r_naoh = self._b[Lignin] * r_lig + self._b[Acetyl] * r_ace + self._b[Xylan] * r_xyl + self._b[Glucan] * r_C
+        r_naoh = self._b[Lignin] * r_lig + self._b[Acetyl] * r_ace
         # convert r_naoh from g/g/s to mol/L/s
         r_naoh = r_naoh / self.phi_l_s / self.molewt_NaOH if w[NaOH] > 0 else 0
         
         rates[Lignin] = r_lig
         rates[Acetyl] = r_ace
-        rates[Xylan] = r_xyl
-        rates[Glucan] = r_C
         rates[NaOH] = r_naoh
 
     def kinetic_rate(self, w, rates):
         naoh_conc = max(w[NaOH], 1e-10) # avoid zero
         lig_conc = max(w[Lignin], 0)
         ace_conc = max(w[Acetyl], 0)
-        xyl_conc = max(w[Xylan], 0)
-        glu_conc = max(w[Glucan], 0)
 
         r_lig = -arrhenius(self._A[Lignin], self._Ea[Lignin], self._T) * naoh_conc**self._n[Lignin] * lig_conc
         r_ace = -arrhenius(self._A[Acetyl], self._Ea[Acetyl], self._T) * naoh_conc**self._n[Acetyl] * ace_conc
-        r_xyl = -arrhenius(self._A[Xylan], self._Ea[Xylan], self._T) * naoh_conc**self._n[Xylan] * xyl_conc
-        r_C = -arrhenius(self._A[Glucan], self._Ea[Glucan], self._T) * naoh_conc**self._n[Glucan] * glu_conc
-        r_naoh = self._b[Lignin] * r_lig + self._b[Acetyl] * r_ace + self._b[Xylan] * r_xyl + self._b[Glucan] * r_C
+        r_naoh = self._b[Lignin] * r_lig + self._b[Acetyl] * r_ace 
         # convert r_naoh from g/g/s to mol/L/s
         r_naoh = r_naoh / self.phi_l_s / self.molewt_NaOH if w[NaOH] > 0 else 0
         
         rates[Lignin] = r_lig
         rates[Acetyl] = r_ace
-        rates[Xylan] = r_xyl
-        rates[Glucan] = r_C
         rates[NaOH] = r_naoh
 
 
@@ -115,17 +104,11 @@ class Deacetylation:
         self.l_time = datadict['time']*60 # convert minutes to seconds
         self.l_lig_yield = datadict['Lignin_yield']
         self.l_ace_yield = datadict['Acetyl_yield']
-        self.l_xyl_yield = datadict['Xylan_yield']
-        self.l_glu_yield = datadict['Glucan_yield']
-        self.l_pH = datadict['pH'] 
-        self.l_NaOH_yield = datadict['NaOH_yield']
         self.NaOH_loading = datadict['NaOH_loading']
         w = np.zeros(5)
         w[NaOH] = datadict['NaOH_loading'] * 1e-3
         w[NaOH] = w[NaOH] / self.phi_l_s / self.molewt_NaOH # convert g/g biomass of NaOH to mol/L
         w[Lignin] = datadict["Lignin"]*0.01 
-        w[Xylan] = datadict["Xylan"]*0.01
-        w[Glucan] = datadict["Glucan"]*0.01
         w[Acetyl] = datadict["Acetyl"]*0.01
         self._w = w
         self._T = datadict["temperature"] + 273.15
@@ -138,8 +121,6 @@ class Deacetylation:
         w[NaOH] = exp_conditon_dict['NaOH_loading'] * 1e-3
         w[NaOH] = w[NaOH] / self.phi_l_s / self.molewt_NaOH # convert g/g biomass of NaOH to mol/L
         w[Lignin] = exp_conditon_dict["Lignin"]*0.01 
-        w[Xylan] = exp_conditon_dict["Xylan"]*0.01
-        w[Glucan] = exp_conditon_dict["Glucan"]*0.01
         w[Acetyl] = exp_conditon_dict["Acetyl"]*0.01
         self._w = w
         self._T = exp_conditon_dict["temperature"] + 273.15
@@ -151,30 +132,20 @@ class Deacetylation:
             'time': t,
             'Lignin': y[:, Lignin],
             'Acetyl': y[:, Acetyl],
-            'Xylan': y[:, Xylan],
-            'Glucan': y[:, Glucan],
-            'NaOH': y[:, NaOH], # in mol/L
-            'pH': calc_pH(y[:, NaOH])
         }
 
-        self.pred["NaOH_yield"] = (self.NaOH_loading/1000 - y[:, NaOH] * self.phi_l_s * self.molewt_NaOH)/(self.NaOH_loading/1000)
         # initialize exp_pred with empty lists 
         exp_pred = {k: [] for k in self.pred.keys()}
-
         
         exp_pred['time'].append(self._duration)
-        for key in ['Lignin', 'Acetyl', 'Xylan', 'Glucan', 'NaOH']:
+        for key in ['Lignin', 'Acetyl']:
             try:
                 exp_pred[key].append(self.pred[key][-1].item())
             except IndexError as e:
                 if not self.silent:
                     self.logger.error(f"key {key}, yield Error: {e}")
                 raise e
-        exp_pred['pH'].append(calc_pH(y[-1, NaOH].item()))
 
-        exp_pred['NaOH_yield'] = 1 - np.array(exp_pred['NaOH']) * self.phi_l_s * self.molewt_NaOH/(self.NaOH_loading/1000)
-        exp_pred['Glucan_yield'] = 1 - np.array(exp_pred['Glucan'])/self._w[Glucan]
-        exp_pred['Xylan_yield'] = 1 - np.array(exp_pred['Xylan'])/self._w[Xylan]
         exp_pred['Lignin_yield'] = 1 - np.array(exp_pred['Lignin'])/self._w[Lignin]
         exp_pred['Acetyl_yield'] = 1 - np.array(exp_pred['Acetyl'])/self._w[Acetyl]
         return exp_pred
@@ -185,13 +156,8 @@ class Deacetylation:
             'time': t,
             'Lignin': y[:, Lignin],
             'Acetyl': y[:, Acetyl],
-            'Xylan': y[:, Xylan],
-            'Glucan': y[:, Glucan],
-            'NaOH': y[:, NaOH], # in mol/L
-            'pH': calc_pH(y[:, NaOH])
         }
 
-        pred["NaOH_yield"] = (self.NaOH_loading/1000 - y[:, NaOH] * self.phi_l_s * self.molewt_NaOH)/(self.NaOH_loading/1000)
         exp_pred = {k: [] for k in pred.keys()}
 
         for time in time_lst:
@@ -201,18 +167,14 @@ class Deacetylation:
                 raise ValueError(f"Requested time {time} exceeds simulation duration {self._duration}.")
             else:
                 exp_pred['time'].append(time)
-                for key in ['Lignin', 'Acetyl', 'Xylan', 'Glucan', 'NaOH']:
+                for key in ['Lignin', 'Acetyl']:
                     try:
                         exp_pred[key].append(pred[key][t==time].item())
                     except IndexError as e:
                         if not self.silent:
                             self.logger.error(f"Time {time},  key {key}, yield Error: {e}")
                         raise e
-                exp_pred['pH'].append(calc_pH(y[t==time, NaOH].item()))
 
-        exp_pred['NaOH_yield'] = 1 - np.array(exp_pred['NaOH']) * self.phi_l_s * self.molewt_NaOH/(self.NaOH_loading/1000)
-        exp_pred['Glucan_yield'] = 1 - np.array(exp_pred['Glucan'])/self._w[Glucan]
-        exp_pred['Xylan_yield'] = 1 - np.array(exp_pred['Xylan'])/self._w[Xylan]
         exp_pred['Lignin_yield'] = 1 - np.array(exp_pred['Lignin'])/self._w[Lignin]
         exp_pred['Acetyl_yield'] = 1 - np.array(exp_pred['Acetyl'])/self._w[Acetyl]
         return exp_pred
@@ -223,13 +185,9 @@ class Deacetylation:
             'time': t,
             'Lignin': y[:, Lignin],
             'Acetyl': y[:, Acetyl],
-            'Xylan': y[:, Xylan],
-            'Glucan': y[:, Glucan],
-            'NaOH': y[:, NaOH], # in mol/L
-            'pH': calc_pH(y[:, NaOH])
+            'NaOH': y[:, NaOH]
         }
 
-        self.pred["NaOH_yield"] = (self.NaOH_loading/1000 - y[:, NaOH] * self.phi_l_s * self.molewt_NaOH)/(self.NaOH_loading/1000)
         # initialize exp_pred with empty lists 
         exp_pred = {k: [] for k in self.pred.keys()}
 
@@ -240,7 +198,7 @@ class Deacetylation:
                 raise ValueError(f"Requested time {time} exceeds simulation duration {self._duration}.")
             else:
                     exp_pred['time'].append(time)
-                    for key in ['Lignin', 'Acetyl', 'Xylan', 'Glucan', 'NaOH']:
+                    for key in ['Lignin', 'Acetyl']:
                         try:
                             # exp_pred[key].append(self.pred[key][t==time].item())
                             interp_val = np.interp(time, t, self.pred[key])
@@ -249,14 +207,8 @@ class Deacetylation:
                             if not self.silent:
                                 self.logger.error(f"Time {time},  key {key}, yield Error: {e}")
                             raise e
-                    # exp_pred['pH'].append(calc_pH(y[t==time, NaOH].item()))
                     interp_naoh = np.interp(time, t, self.pred['NaOH'])
-                    exp_pred['pH'].append(calc_pH(interp_naoh))
 
-
-        exp_pred['NaOH_yield'] = 1 - np.array(exp_pred['NaOH']) * self.phi_l_s * self.molewt_NaOH/(self.NaOH_loading/1000)
-        exp_pred['Glucan_yield'] = 1 - np.array(exp_pred['Glucan'])/self._w[Glucan]
-        exp_pred['Xylan_yield'] = 1 - np.array(exp_pred['Xylan'])/self._w[Xylan]
         exp_pred['Lignin_yield'] = 1 - np.array(exp_pred['Lignin'])/self._w[Lignin]
         exp_pred['Acetyl_yield'] = 1 - np.array(exp_pred['Acetyl'])/self._w[Acetyl]
 
@@ -264,17 +216,13 @@ class Deacetylation:
             'time': self.l_time,
             'Lignin_yield': self.l_lig_yield,
             'Acetyl_yield': self.l_ace_yield,
-            'Xylan_yield': self.l_xyl_yield,
-            'Glucan_yield': self.l_glu_yield,
-            'pH': self.l_pH,
-            'NaOH_yield': self.l_NaOH_yield
         }
         # for key in exp_pred.keys():
         #     exp_pred[key] = np.array(exp_pred[key])
         return exp, exp_pred 
 
         
-    def set_parameters(self, A, Ea, b=np.array([0,0.2,0.93,0,0]), n=np.ones(5), titration_amount=0):
+    def set_parameters(self, A, Ea, b=np.array([0,0.2,0.93]), n=np.ones(3), titration_amount=0):
         """_summary_
 
         Args:

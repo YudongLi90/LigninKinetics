@@ -2,7 +2,6 @@ from Deactylation import Deacetylation
 from constants import *
 import numpy as np
 import matplotlib.pyplot as plt
-from utils import calc_pH
 import pickle
 
 from scipy.optimize import least_squares
@@ -14,7 +13,6 @@ data_t_naoh = pickle.load(open('./data/data.pkl', 'rb'))
 T_ref=70+273.15 # reference temperature for k_ref in K
 
 
-
 def get_k(k_ref, Ea, T_ref, T):
     k = k_ref * np.exp(-Ea*1000/R * (1/T - 1/T_ref))
     return k
@@ -23,17 +21,49 @@ def get_A_from_k_ref(k_ref, Ea, T_ref):
     A = k_ref / np.exp(-Ea*1000/(R*T_ref))
     return A
 
-def run_simulation(params, weights={'Lignin_yield': 1.0, 'Acetyl_yield': 1.0, 'NaOH_yield': 1.0}):
-    # weights = {
-    #     "Lignin_yield": 5.0,
-    #     "Acetyl_yield": 1.0,
-    #     "NaOH_yield": 0.2
-    # }
+def run_simulation(params, weights={'Lignin_yield': 1.0, 'Acetyl_yield': 1.0}):
     ln_k_ref_lig, Ea_lig, ln_k_ref_ace, Ea_ace, b_lig, n_lig, n_ace = params
     k_ref_lig = np.exp(ln_k_ref_lig)
     k_ref_ace = np.exp(ln_k_ref_ace)
 
     all_residuals = []
+    start = Timer().timeit()
+    da = Deacetylation(silent=True) 
+    for datadict in data_t_naoh:
+        da.set_experimental_data(datadict)
+        k_lig = get_k(k_ref_lig, Ea_lig, T_ref=T_ref, T=da._T)
+        k_ace = get_k(k_ref_ace, Ea_ace, T_ref=T_ref, T=da._T)
+
+        A = np.zeros(3)
+        A[Lignin] = get_A_from_k_ref(k_ref_lig, Ea_lig, T_ref)
+        A[Acetyl] = get_A_from_k_ref(k_ref_ace, Ea_ace, T_ref)
+        Ea = np.zeros(3)
+        Ea[Lignin] = Ea_lig*1000
+        Ea[Acetyl] = Ea_ace*1000
+        b = np.zeros(3)
+        b[Lignin] = b_lig
+        b[Acetyl] = 0.93 # theoretical acetyl to NaOH 1:1 molar ratio which converts to 0.93 g/g weight ratio based on molecular weights
+        n = np.ones(3)
+        n[Lignin] = n_lig
+        n[Acetyl] = n_ace
+        da.set_parameters(A, Ea, b, n)
+        exp, pred = da.get_prediction()
+
+        for key in ['Lignin_yield', 'Acetyl_yield']:
+            residual = (np.array(exp[key]) - np.array(pred[key])) * weights[key]
+            all_residuals.append(residual)
+
+    return np.concatenate(all_residuals)
+
+def run_simulation_raw(params, weights={'Lignin_yield': 1.0, 'Acetyl_yield': 1.0}):
+
+    ln_k_ref_lig, Ea_lig, ln_k_ref_ace, Ea_ace, b_lig, n_lig, n_ace = params
+    k_ref_lig = np.exp(ln_k_ref_lig)
+    k_ref_ace = np.exp(ln_k_ref_ace)
+
+    lignin_residuals = []
+    acetyl_residuals = []
+    naoh_residuals = []
     start = Timer().timeit()
     da = Deacetylation(silent=True) 
     for datadict in data_t_naoh:
@@ -55,22 +85,13 @@ def run_simulation(params, weights={'Lignin_yield': 1.0, 'Acetyl_yield': 1.0, 'N
         n[Acetyl] = n_ace
         da.set_parameters(A, Ea, b, n)
         exp, pred = da.get_prediction()
-        error = 0
-        for key in ['Lignin_yield', 'Acetyl_yield']:
-            residual = (np.array(exp[key]) - np.array(pred[key])) * weights[key]
-            all_residuals.append(residual)
 
-        # if np.isnan(exp['NaOH_yield']).any():
-        #     if not da.silent:
-        #         print(f"NaOH_yield contains NaN values for experiment T: {da._T} NaOH loading {da.NaOH_loading} . Skipping NaOH_yield error calculation.")
-        # else:
-        #     residual = (np.array(exp['NaOH_yield']) - np.array(pred['NaOH_yield'])) * weights['NaOH_yield']
+        lignin_res = (np.array(exp['Lignin_yield']) - np.array(pred['Lignin_yield'])) * weights['Lignin_yield']
+        acetyl_res = (np.array(exp['Acetyl_yield']) - np.array(pred['Acetyl_yield'])) * weights['Acetyl_yield']
+        lignin_residuals.append(lignin_res)
+        acetyl_residuals.append(acetyl_res)
 
-        # all_residuals.append(residual)
-    
-    # print(f"run_simulation took {Timer().timeit() - start:.2f} seconds.")
-
-    return np.concatenate(all_residuals)
+    return np.concatenate(lignin_residuals), np.concatenate(acetyl_residuals)
 
 def optimize_parameters(x0, lb, ub):
     result = least_squares(run_simulation, x0=x0, bounds=(lb, ub), method='trf', loss='soft_l1', f_scale=1, verbose=2)
@@ -115,6 +136,3 @@ if __name__ == "__main__":
     A_lig = get_A_from_k_ref(np.exp(best_params[0]), best_params[1], T_ref)
     A_ace = get_A_from_k_ref(np.exp(best_params[2]), best_params[3], T_ref)
     print(f"Optimized A_lig: {A_lig:.4e}, Ea_lig: {best_params[1]:.2f} kJ/mol, A_ace: {A_ace:.4e}, Ea_ace: {best_params[3]:.2f} kJ/mol, b_lig: {best_params[4]:.2e}, n_lig: {best_params[5]:.2f}, n_ace: {best_params[6]:.2f}")
-
-
-

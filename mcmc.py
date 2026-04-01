@@ -1,5 +1,5 @@
 import emcee
-from regression import get_A_from_k_ref, run_simulation, optimize_parameters
+from regression import get_A_from_k_ref, run_simulation_raw, optimize_parameters
 import tqdm
 import corner
 import numpy as np
@@ -18,35 +18,35 @@ lb = [np.log(1e-5), 20, np.log(1e-5), 0, 0.1, 0.5, 0.5]  # Lower bounds for ln(k
 ub = [np.log(1e2), 100, np.log(1e2), 40, 0.8, 2.0, 2.0]  # Upper bounds for ln(k_ref_lig), Ea_lig, ln(k_ref_ace), Ea_ace, b_lig, n_lig, n_ace
 
 sigma_lb = 0.001 # Minimum noise level (1% yield error)
-sigma_ub = 0.1   # Maximum noise level (10% yield error)    
+sigma_ub = 0.2   # Maximum noise level (20% yield error)    
 sigma_0 = 0.05   # Initial guess for noise level (5% yield error)
 
 def log_prior(theta):
     # theta = [ln_k_ref_lig, Ea_lig, ln_k_ref_ace, Ea_ace, b_lignin, gamma, n, sigma]
     # Note: We add 'sigma' (noise level) as a parameter to be estimated!
-    
-    ln_k_lig, Ea_lig, ln_k_ace, Ea_ace, b_lig, gamma, n, sigma = theta
+    ln_k_lig, Ea_lig, ln_k_ace, Ea_ace, b_lig, gamma, n, sigma_lig, sigma_ace = theta
     
     # Check bounds (similar to your 'lb' and 'ub')
     if (lb[0] < ln_k_lig < ub[0] and lb[1] < Ea_lig < ub[1] and 
         lb[2] < ln_k_ace < ub[2] and lb[3] < Ea_ace < ub[3] and 
         lb[4] < b_lig < ub[4] and lb[5] <= gamma < ub[5] and 
-        lb[6] < n < ub[6] and sigma_lb < sigma < sigma_ub):
+        lb[6] < n < ub[6] and sigma_lb < sigma_lig < sigma_ub and sigma_lb < sigma_ace < sigma_ub):
         return 0.0 # uniform prior (equal probability within bounds)
     return -np.inf # impossible parameter set
 
 def log_likelihood(theta, experimental_data):
     # Unpack parameters (excluding sigma for the simulation run)
-    params_for_sim = theta[:-1] 
-    sigma = theta[-1] # 
-    
-    residuals = run_simulation(params_for_sim, weights={'Lignin_yield': 1.0, 'Acetyl_yield': 1.0, 'NaOH_yield': 1.0}) 
+    params_for_sim = theta[:-2] 
+    sigma_lig = theta[-2] # The standard deviation of the noise (unknown)
+    sigma_ace = theta[-1] # The standard deviation of the noise (unknown)
+
+    # Note: run_simulation must return the RAW residuals (exp - pred), not squared
+    lignin_residuals, acetyl_residuals = run_simulation_raw(params_for_sim, weights={'Lignin_yield': 1.0, 'Acetyl_yield': 1.0}) 
     
     # Calculate Gaussian likelihood
-    # Ln(L) = -0.5 * sum( (residual/sigma)^2 + ln(2*pi*sigma^2) )
-    n_points = len(residuals)
-    log_l = -0.5 * np.sum((residuals / sigma) ** 2 + np.log(2 * np.pi * sigma ** 2))
-    return log_l
+    log_l_lig = -0.5 * np.sum((lignin_residuals / sigma_lig) ** 2 + np.log(2 * np.pi * sigma_lig ** 2))
+    log_l_ace = -0.5 * np.sum((acetyl_residuals / sigma_ace) ** 2 + np.log(2 * np.pi * sigma_ace ** 2))
+    return log_l_lig + log_l_ace # + log_l_naoh
 
 def log_probability(theta, experimental_data):
     lp = log_prior(theta)
@@ -56,11 +56,13 @@ def log_probability(theta, experimental_data):
 
 def run_mcmc(initial_guess, nwalkers=32, nsteps=5000):
     # Setup
-    ndim = 8  # number of parameters (7 kinetic + 1 sigma)
+    ndim = 9  # number of parameters (7 kinetic + 2 sigma)
     
-    initial_guess_with_sigma = np.append(initial_guess, 0.05)
+    # Initialize walkers in a tiny ball around your best guess (from least_squares)
+    initial_guess_with_sigma = np.append(initial_guess, [0.05, 0.05])
     pos = initial_guess_with_sigma + 1e-4 * np.random.randn(nwalkers, ndim)
 
+    # Run emcee
     ncpu = os.cpu_count() - 2 
     print(f"Using {ncpu} CPUs")
 
@@ -77,11 +79,11 @@ def run_mcmc(initial_guess, nwalkers=32, nsteps=5000):
 
         sampler.run_mcmc(pos, nsteps, progress=True)
     
-    # Discard "burn-in" (the first 300 steps where it's finding the groove)
+    # Discard "burn-in"  This is just an example. Should double check tau
     flat_samples = sampler.get_chain(discard=400, thin=15, flat=True)
     return flat_samples, sampler
 
-def run_all(chain_length=5000):
+def run_all(nwalkers=32, chain_length=5000):
     results = optimize_parameters(x0, lb, ub)
     best_params = results.x
     print("Best parameters from optimization:", best_params)
@@ -89,7 +91,7 @@ def run_all(chain_length=5000):
     A_lig = get_A_from_k_ref(np.exp(best_params[0]), best_params[1], T_ref)
     A_ace = get_A_from_k_ref(np.exp(best_params[2]), best_params[3], T_ref)
     print(f"Optimized A_lig: {A_lig:.4e}, Ea_lig: {best_params[1]:.2f} kJ/mol, A_ace: {A_ace:.4e}, Ea_ace: {best_params[3]:.2f} kJ/mol, b_lig: {best_params[4]:.2e}, n_lig: {best_params[5]:.2f}, n_ace: {best_params[6]:.2f}")
-    posterior_samples, sampler = run_mcmc(best_params, nwalkers=32, nsteps=chain_length)
+    posterior_samples, sampler = run_mcmc(best_params, nwalkers=nwalkers, nsteps=chain_length)
     # Calculate the autocorrelation time (tau)
     tau = sampler.get_autocorr_time()
     print(f"Autocorrelation time for each parameter: {tau}")
@@ -114,7 +116,6 @@ if __name__ == "__main__":
     tau = sampler.get_autocorr_time()
     print(f"Autocorrelation time for each parameter: {tau}")
 
-    # Get the maximum tau across all your parameters
     max_tau = np.max(tau)
 
     # Calculate dynamic burn-in and thinning
@@ -163,19 +164,11 @@ if __name__ == "__main__":
         r"$n_{ace}$", 
     ]
 
-    # plt.rc('font', family='serif', serif='Times New Roman')
-    # plt.rc('text', usetex=False)
-    # plt.rc('xtick', labelsize=18)
-    # plt.rc('ytick', labelsize=18)
-    # plt.rc('axes', labelsize=18)
     import matplotlib as mpl
     mpl.rcParams['font.family'] = 'serif'
     mpl.rcParams['font.serif'] = 'Times New Roman'
-
     plt.rcParams.update({'font.size': 10, 'font.family': 'serif', 'font.serif': 'Times New Roman'})
 
-    # 2. Generate the plot
-    # flat_samples is the result from sampler.get_chain(flat=True)
     fig = corner.corner(
         posterior_samples[:, :-1], 
         labels=labels, 
